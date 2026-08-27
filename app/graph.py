@@ -18,6 +18,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.config import get_settings
 from app.llm import get_chat_model, has_llm_credentials
+from app.observability import graph_run_config, trace_agent_node
 
 
 class AgentState(TypedDict):
@@ -31,36 +32,58 @@ class AgentState(TypedDict):
     current_agent: str
 
 
-def _llm_invoke(system: str, user: str) -> str:
+def _llm_invoke(system: str, user: str, *, agent_name: str = "agent") -> str:
     """Invoca el LLM del provider activo; sin key responde en modo stub."""
-    if not has_llm_credentials():
-        return f"[stub] {system.split('.')[0]} :: {user[:200]}"
 
-    llm = get_chat_model()
-    response = llm.invoke(
-        [SystemMessage(content=system), HumanMessage(content=user)]
-    )
-    return str(response.content)
+    def _run() -> str:
+        if not has_llm_credentials():
+            return f"[stub] {system.split('.')[0]} :: {user[:200]}"
+
+        llm = get_chat_model()
+        response = llm.invoke(
+            [SystemMessage(content=system), HumanMessage(content=user)]
+        )
+        return str(response.content)
+
+    if get_settings().observability_backend == "none":
+        return _run()
+
+    try:
+        from langsmith import traceable
+
+        traced = traceable(
+            name=f"{agent_name}_llm",
+            run_type="llm",
+            metadata={"agent": agent_name},
+        )(_run)
+        return traced()
+    except Exception:
+        return _run()
 
 
+@trace_agent_node("planner")
 def planner_node(state: AgentState) -> dict[str, str]:
     """Agente planificador: descompone la tarea en pasos."""
     plan = _llm_invoke(
         "Sos un planificador. Devolvé un plan breve en pasos numerados.",
         f"Tarea: {state['task']}",
+        agent_name="planner",
     )
     return {"plan": plan, "current_agent": "planner"}
 
 
+@trace_agent_node("researcher")
 def researcher_node(state: AgentState) -> dict[str, str]:
     """Agente investigador: reúne hallazgos según el plan."""
     research = _llm_invoke(
         "Sos un investigador. Resumí hallazgos clave y fuentes conceptuales.",
         f"Tarea: {state['task']}\nPlan:\n{state['plan']}",
+        agent_name="researcher",
     )
     return {"research": research, "current_agent": "researcher"}
 
 
+@trace_agent_node("analyst")
 def analyst_node(state: AgentState) -> dict[str, str]:
     """Agente analista: interpreta la investigación."""
     analysis = _llm_invoke(
@@ -70,10 +93,12 @@ def analyst_node(state: AgentState) -> dict[str, str]:
             f"Plan:\n{state['plan']}\n"
             f"Investigación:\n{state['research']}"
         ),
+        agent_name="analyst",
     )
     return {"analysis": analysis, "current_agent": "analyst"}
 
 
+@trace_agent_node("writer")
 def writer_node(state: AgentState) -> dict[str, str]:
     """Agente redactor: produce el resultado final."""
     result = _llm_invoke(
@@ -83,6 +108,7 @@ def writer_node(state: AgentState) -> dict[str, str]:
             f"Análisis:\n{state['analysis']}\n"
             f"Investigación:\n{state['research']}"
         ),
+        agent_name="writer",
     )
     return {"result": result, "current_agent": "writer"}
 
@@ -153,5 +179,5 @@ def run_graph(
         "result": "",
         "current_agent": "",
     }
-    config = {"configurable": {"thread_id": thread_id}}
+    config = graph_run_config(thread_id=thread_id, task=task)
     return graph.invoke(initial, config=config)

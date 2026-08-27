@@ -48,4 +48,17 @@ curl http://localhost:8000/tasks/<job_id>
 
 Redis queda en `localhost:6380` (mapeo host→contenedor). El grafo multiagente usa `RedisSaver` sobre esa instancia.
 
+### Observabilidad (LangSmith)
+
+```env
+OBSERVABILITY_BACKEND=langsmith
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=tu_key
+LANGCHAIN_PROJECT=async-multi-agent-api-monitoring
+```
+
+Tras `POST /tasks`, las trazas aparecen en [smith.langchain.com](https://smith.langchain.com) con tags `multi-agent`, `api` y el `job_id` en metadata. `GET /health` devuelve `tracing_enabled`.
+
+Capturas del dashboard: ver `screenshots/README.md`.
+
 Para levantar API + Redis con Docker: `docker compose --profile full up -d` (requiere `.env`).

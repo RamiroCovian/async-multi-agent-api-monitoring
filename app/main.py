@@ -12,14 +12,16 @@ from app.config import get_settings
 from app.graph import create_checkpointer
 from app.hitl import router as hitl_router
 from app.jobs import JobStore
+from app.observability import configure_observability, is_tracing_enabled
 from app.schemas import TaskCreate, TaskCreated, TaskStatusResponse
 from app.worker import JobStatus, process_job
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Inicializa Redis (jobs) y RedisSaver (checkpoints LangGraph)."""
+    """Inicializa observabilidad, Redis (jobs) y RedisSaver (checkpoints)."""
     settings = get_settings()
+    configure_observability(settings)
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     checkpointer = create_checkpointer(settings.redis_url)
 
@@ -51,9 +53,9 @@ def _job_store(request: Request) -> JobStore:
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
+async def health() -> dict[str, str | bool]:
     """Verifica que la API responde."""
-    return {"status": "ok"}
+    return {"status": "ok", "tracing_enabled": is_tracing_enabled()}
 
 
 @app.post("/tasks", status_code=202, response_model=TaskCreated)
