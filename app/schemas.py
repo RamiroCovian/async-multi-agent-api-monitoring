@@ -31,6 +31,22 @@ class TaskStatusResponse(BaseModel):
     result: str | None = None
     error: str | None = None
     current_agent: str | None = None
+    approval: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
     extras: dict[str, Any] | None = None
+
+
+class TaskApprovalRequest(BaseModel):
+    """Payload para aprobar o rechazar un job en HITL."""
+
+    approved: bool = Field(..., description="True para aprobar y continuar; False para rechazar")
+
+
+class TaskApprovalResponse(BaseModel):
+    """Confirmación de reanudación HITL."""
+
+    job_id: str
+    status: JobStatus
+    approved: bool
+    detail: str
