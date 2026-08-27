@@ -165,7 +165,20 @@ LANGCHAIN_PROJECT=async-multi-agent-api-monitoring
 
 Tras ejecutar jobs, las trazas aparecen en [smith.langchain.com](https://smith.langchain.com) con tags `multi-agent`, `api` y `job_id` en metadata.
 
-Capturas: guardar en `screenshots/` (ver `screenshots/README.md`).
+Capturas: guardar en `screenshots/langsmith-traces.png` (ver guía abajo).
+
+### Generar traza + captura (pre-entrega)
+
+```bash
+cp .env.example .env
+# Completar LANGCHAIN_API_KEY en .env
+
+docker compose up -d redis
+PYTHONPATH=. python scripts/generate_langsmith_evidence.py
+# → abrir el link, capturar pantalla → screenshots/langsmith-traces.png
+```
+
+Detalle paso a paso: [`screenshots/README.md`](screenshots/README.md).
 
 ## Smoke tests
 
@@ -189,5 +202,5 @@ docker compose --profile full up -d
 - [ ] `POST /tasks` devuelve `202` + `job_id` al instante
 - [ ] Jobs persisten estado en Redis (`DONE` / `FAILED` / `AWAITING_APPROVAL`)
 - [ ] HITL: approve → continúa; reject → rechazo
-- [ ] Trazas visibles en LangSmith + captura en `screenshots/`
+- [ ] Trazas visibles en LangSmith + captura en `screenshots/langsmith-traces.png`
 - [ ] `load_test_concurrent.py` con 5 requests OK
