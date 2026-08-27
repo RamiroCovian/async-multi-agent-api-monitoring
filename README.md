@@ -42,8 +42,11 @@ Health: `GET http://localhost:8000/health`
 # Encolar (responde de inmediato con job_id)
 curl -X POST http://localhost:8000/tasks -H "Content-Type: application/json" -d "{\"task\":\"Analizar APIs async\"}"
 
-# Consultar estado: PENDING | RUNNING | DONE | FAILED
+# Consultar estado: PENDING | RUNNING | AWAITING_APPROVAL | DONE | FAILED
 curl http://localhost:8000/tasks/<job_id>
+
+# Aprobar o rechazar cuando status=AWAITING_APPROVAL
+curl -X POST http://localhost:8000/tasks/<job_id>/approve -H "Content-Type: application/json" -d "{\"approved\":true}"
 ```
 
 Redis queda en `localhost:6380` (mapeo host→contenedor). El grafo multiagente usa `RedisSaver` sobre esa instancia.

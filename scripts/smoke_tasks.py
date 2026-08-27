@@ -10,12 +10,21 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-def _wait_status(client: TestClient, job_id: str, timeout_s: float = 15.0) -> dict:
+def _wait_status(
+    client: TestClient,
+    job_id: str,
+    wanted: set[str] | None = None,
+    timeout_s: float = 15.0,
+) -> dict:
+    wanted = wanted or {"DONE", "FAILED"}
     deadline = time.time() + timeout_s
     body: dict = {}
     while time.time() < deadline:
         body = client.get(f"/tasks/{job_id}").json()
-        if body.get("status") in {"DONE", "FAILED"}:
+        status = body.get("status")
+        if status == "AWAITING_APPROVAL":
+            client.post(f"/tasks/{job_id}/approve", json={"approved": True})
+        elif status in wanted:
             return body
         time.sleep(0.2)
     raise AssertionError(f"timeout waiting job {job_id}: {body}")

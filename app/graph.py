@@ -1,10 +1,10 @@
 """Orquestador multiagente (LangGraph) con checkpointer RedisSaver.
 
 Pipeline M6:
-  planner -> researcher -> analyst -> writer
+  planner -> researcher -> analyst -> human_approval (HITL) -> writer
 
 El checkpointer Redis persiste el estado por `thread_id` (p. ej. job_id).
-El nodo HITL / interrupt se agrega en feature/20260827_hitl.
+El nodo `human_approval` usa `interrupt()` y se reanuda vía POST /tasks/{id}/approve.
 """
 
 from __future__ import annotations
@@ -13,8 +13,10 @@ from typing import Any, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.redis import RedisSaver
+from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command, interrupt
 
 from app.config import get_settings
 from app.llm import get_chat_model, has_llm_credentials
@@ -30,6 +32,7 @@ class AgentState(TypedDict):
     analysis: str
     result: str
     current_agent: str
+    approval: str
 
 
 def _llm_invoke(system: str, user: str, *, agent_name: str = "agent") -> str:
@@ -98,6 +101,34 @@ def analyst_node(state: AgentState) -> dict[str, str]:
     return {"analysis": analysis, "current_agent": "analyst"}
 
 
+@trace_agent_node("human_approval")
+def human_approval_node(state: AgentState) -> dict[str, str]:
+    """Pausa obligatoria para aprobación humana antes del writer."""
+    decision = interrupt(
+        {
+            "type": "human_approval",
+            "message": "Aprobación humana requerida antes de redactar el resultado final.",
+            "task": state["task"],
+            "analysis_preview": (state.get("analysis") or "")[:500],
+        }
+    )
+    normalized = str(decision).strip().lower()
+    if normalized in {"rejected", "reject", "no", "false", "0"}:
+        return {
+            "approval": "rejected",
+            "current_agent": "human_approval",
+            "result": "Tarea rechazada por aprobador humano.",
+        }
+    return {"approval": "approved", "current_agent": "human_approval"}
+
+
+def route_after_approval(state: AgentState) -> str:
+    """Si se rechaza, termina; si se aprueba, continúa al writer."""
+    if state.get("approval") == "rejected":
+        return END
+    return "writer"
+
+
 @trace_agent_node("writer")
 def writer_node(state: AgentState) -> dict[str, str]:
     """Agente redactor: produce el resultado final."""
@@ -143,15 +174,54 @@ def build_graph(checkpointer: RedisSaver | None = None) -> CompiledStateGraph:
     builder.add_node("planner", planner_node)
     builder.add_node("researcher", researcher_node)
     builder.add_node("analyst", analyst_node)
+    builder.add_node("human_approval", human_approval_node)
     builder.add_node("writer", writer_node)
 
     builder.add_edge(START, "planner")
     builder.add_edge("planner", "researcher")
     builder.add_edge("researcher", "analyst")
-    builder.add_edge("analyst", "writer")
+    builder.add_edge("analyst", "human_approval")
+    builder.add_conditional_edges(
+        "human_approval",
+        route_after_approval,
+        {"writer": "writer", END: END},
+    )
     builder.add_edge("writer", END)
 
     return builder.compile(checkpointer=saver)
+
+
+def _initial_state(task: str) -> AgentState:
+    return {
+        "task": task,
+        "plan": "",
+        "research": "",
+        "analysis": "",
+        "result": "",
+        "current_agent": "",
+        "approval": "",
+    }
+
+
+def _result_from_interrupt(
+    graph: CompiledStateGraph,
+    config: dict[str, Any],
+    *,
+    initial: AgentState | None = None,
+    invoke_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Normaliza el estado cuando el grafo queda pausado en HITL."""
+    if invoke_result and "__interrupt__" in invoke_result:
+        values = {k: v for k, v in invoke_result.items() if not k.startswith("__")}
+    else:
+        snapshot = graph.get_state(config)
+        values = dict(snapshot.values) if snapshot.values else dict(initial or {})
+    values["__interrupted__"] = True
+    return values
+
+
+def _is_interrupted(result: dict[str, Any]) -> bool:
+    return bool(result.get("__interrupted__") or result.get("__interrupt__"))
 
 
 def run_graph(
@@ -171,13 +241,31 @@ def run_graph(
         Estado final del grafo.
     """
     graph = build_graph(checkpointer=checkpointer)
-    initial: AgentState = {
-        "task": task,
-        "plan": "",
-        "research": "",
-        "analysis": "",
-        "result": "",
-        "current_agent": "",
-    }
+    initial = _initial_state(task)
     config = graph_run_config(thread_id=thread_id, task=task)
-    return graph.invoke(initial, config=config)
+    try:
+        result = graph.invoke(initial, config=config)
+        if _is_interrupted(result):
+            return _result_from_interrupt(graph, config, initial=initial, invoke_result=result)
+        return result
+    except GraphInterrupt:
+        return _result_from_interrupt(graph, config, initial=initial)
+
+
+def resume_graph(
+    thread_id: str,
+    *,
+    approved: bool,
+    checkpointer: RedisSaver | None = None,
+) -> dict[str, Any]:
+    """Reanuda el grafo tras aprobación humana (Command(resume=...))."""
+    graph = build_graph(checkpointer=checkpointer)
+    config = graph_run_config(thread_id=thread_id, task="")
+    resume_value = "approved" if approved else "rejected"
+    try:
+        result = graph.invoke(Command(resume=resume_value), config=config)
+        if _is_interrupted(result):
+            return _result_from_interrupt(graph, config, invoke_result=result)
+        return result
+    except GraphInterrupt:
+        return _result_from_interrupt(graph, config)

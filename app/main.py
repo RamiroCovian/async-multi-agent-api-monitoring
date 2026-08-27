@@ -92,6 +92,7 @@ async def get_task(job_id: str, request: Request) -> TaskStatusResponse:
         result=job.get("result") or None,
         error=job.get("error") or None,
         current_agent=job.get("current_agent") or None,
+        approval=job.get("approval") or None,
         created_at=job.get("created_at") or None,
         updated_at=job.get("updated_at") or None,
     )
