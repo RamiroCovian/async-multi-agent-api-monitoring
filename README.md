@@ -36,6 +36,16 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 Health: `GET http://localhost:8000/health`
 
+### Tasks (async)
+
+```bash
+# Encolar (responde de inmediato con job_id)
+curl -X POST http://localhost:8000/tasks -H "Content-Type: application/json" -d "{\"task\":\"Analizar APIs async\"}"
+
+# Consultar estado: PENDING | RUNNING | DONE | FAILED
+curl http://localhost:8000/tasks/<job_id>
+```
+
 Redis queda en `localhost:6380` (mapeo host→contenedor). El grafo multiagente usa `RedisSaver` sobre esa instancia.
 
 Para levantar API + Redis con Docker: `docker compose --profile full up -d` (requiere `.env`).
