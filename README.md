@@ -25,8 +25,9 @@ python -m venv env
 
 pip install -r requirements.txt
 cp .env.example .env
+# En .env: LLM_PROVIDER=gemini|openai|anthropic + la API key del provider
 
-# Redis (solo Redis; la API corre en local)
+# Redis 8 (RediSearch/RedisJSON para RedisSaver); la API corre en local
 docker compose up -d redis
 
 # API
@@ -34,5 +35,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Health: `GET http://localhost:8000/health`
+
+Redis queda en `localhost:6380` (mapeo host→contenedor). El grafo multiagente usa `RedisSaver` sobre esa instancia.
 
 Para levantar API + Redis con Docker: `docker compose --profile full up -d` (requiere `.env`).

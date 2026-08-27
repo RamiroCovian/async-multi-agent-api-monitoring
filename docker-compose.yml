@@ -1,9 +1,10 @@
 services:
   redis:
-    image: redis:7-alpine
+    # Redis 8 incluye RedisJSON + RediSearch (requeridos por RedisSaver)
+    image: redis:8
     container_name: ama-redis
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
